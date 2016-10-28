@@ -1,0 +1,188 @@
+from lxml import etree
+import os
+from parser_functions import pNameFinder
+from parser_functions import nNameMaker
+from parser_functions import nLongNameMaker
+from parser_functions import nameMatcher
+from time import gmtime, strftime
+from parser_functions import playProcess
+from subprocess import call
+strftime("%Y-%m-%d %H:%M:%S", gmtime())
+parser = etree.HTMLParser()
+
+
+parsing = open("./parsings/parse_trial",'a')
+
+weirdNames = open('./../weird_names.txt','r')
+weirdNamesList = []
+weirdNamesNick = []
+for line in weirdNames:
+		data_line = line.split(',')
+		weirdNamesList.append(data_line[0])
+		weirdNamesNick.append(data_line[1])
+weirdNames.close()
+
+ii = 0
+for file in os.listdir('./../box_scores'):
+	ii += 1
+	if ii % 1000 == 0:
+		print strftime("%H:%M:%S", gmtime()) + "   " + str(ii)
+	if file[0] != '.':
+		fullFile = './../box_scores/' + file
+		tree = etree.parse(fullFile, parser)
+		root = tree.getroot()
+
+### Part 0: Getting robust page navigation
+		tablesOnPage = root.xpath('//table[@class="sortable  stats_table"]')
+
+### Part 1: Extracting Lineups
+
+		lineupNames = []
+		lineupNicknames = []
+		longNicknames = []
+		lineupTable = tablesOnPage[0].xpath('./tbody/tr')
+		playerNo = 0
+		tableIndex = 0
+		while playerNo < 9:
+			playerText = lineupTable[tableIndex].xpath('./td[1]/text()')[0]
+			if playerText[0] == ' ':
+				lineupNames.append(pNameFinder(lineupTable[tableIndex].xpath('./td/a/@href')[0]))
+				lineupNicknames.append(nNameMaker(lineupTable[tableIndex].xpath('./td/a/text()')[0]))
+				longNicknames.append(nLongNameMaker(lineupTable[tableIndex].xpath('./td/a/text()')[0]))
+				playerNo += 1
+			tableIndex += 1
+		lineupTable = tablesOnPage[1].xpath('./tbody/tr')
+		tableIndex = 0
+		while playerNo < 18:
+			playerText = lineupTable[tableIndex].xpath('./td[1]/text()')[0]
+			if playerText[0] == ' ':
+				lineupNames.append(pNameFinder(lineupTable[tableIndex].xpath('./td/a/@href')[0]))
+				lineupNicknames.append(nNameMaker(lineupTable[tableIndex].xpath('./td/a/text()')[0]))
+				longNicknames.append(nLongNameMaker(lineupTable[tableIndex].xpath('./td/a/text()')[0]))
+				playerNo += 1
+			tableIndex += 1
+
+### Part 2: Extracting Pitchers
+
+		pitcherTable = tablesOnPage[2].xpath('./tbody/tr')
+		pitcherNames = []
+		pitcherNicknames = []
+		pitcherLongnames = []
+		for child in pitcherTable:
+			pitcherNames.append(pNameFinder(child.xpath('./td/a/@href')[0]))
+			pitcherNicknames.append(nNameMaker(child.xpath('./td/a/text()')[0]))
+			pitcherLongnames.append(nLongNameMaker(child.xpath('./td/a/text()')[0]))
+		lbsr = len(pitcherNames)
+		pitcherTable = tablesOnPage[3].xpath('./tbody/tr')
+		for child in pitcherTable:
+			pitcherNames.append(pNameFinder(child.xpath('./td/a/@href')[0]))
+			pitcherNicknames.append(nNameMaker(child.xpath('./td/a/text()')[0]))
+			pitcherLongnames.append(nLongNameMaker(child.xpath('./td/a/text()')[0]))
+	# dirty hack to reorder list
+		sspName = pitcherNames[lbsr]
+		sspNickname = pitcherNicknames[lbsr]
+		sspLongname = pitcherLongnames[lbsr]
+		pitcherNames.remove(sspName)
+		pitcherNicknames.remove(sspNickname)
+		pitcherLongnames.remove(sspLongname)
+		pitcherNames.insert(1,sspName)
+		pitcherNicknames.insert(1,sspNickname)
+		pitcherLongnames.insert(1,sspLongname)
+
+
+### Part 3: Going through the play-by-play for each starting batter and determining all
+### his hits and misses.
+		dirtyPlays = tablesOnPage[5].xpath('./tbody/tr')
+		plays = []
+		for play in dirtyPlays:
+			if len(play.xpath('./@id')) > 0:
+				plays.append(play)
+	### Subpart 1: identifying player nicknames	
+		for i in range(18):
+			playerFound = 0
+			for play in plays:
+				nameInPlay = play.xpath('./td[8]/text()')[0]
+				nameInPlay = nameInPlay.replace(u"\u00A0", " ")
+				if lineupNicknames[i] == nameInPlay:
+					playerFound = 1
+					break
+			if playerFound != 1:
+				lineupNicknames[i] = longNicknames[i]
+				for play in plays:
+					nameInPlay = play.xpath('./td[8]/text()')[0]
+					nameInPlay = nameInPlay.replace(u"\u00A0", " ")
+					if lineupNicknames[i] == nameInPlay:
+						playerFound = 1
+						break
+				if playerFound != 1:
+					for l in range(len(weirdNamesList)):
+						if lineupNames[i] == weirdNamesList[l]:
+							lineupNicknames[i] = weirdNamesNick[l]
+							break
+	### Subpart 2: identifying pitcher nicknames
+		for i in range(len(pitcherNames)):
+			playerFound = 0
+			for play in plays:
+				nameInPlay = play.xpath('./td[9]/text()')[0]
+				nameInPlay = nameInPlay.replace(u"\u00A0", " ")
+				if pitcherNicknames[i] == nameInPlay:
+					playerFound = 1
+					break
+			if playerFound != 1:
+				pitcherNicknames[i] = pitcherLongnames[i]
+				for play in plays:
+					nameInPlay = play.xpath('./td[9]/text()')[0]
+					nameInPlay = nameInPlay.replace(u"\u00A0", " ")
+					if pitcherNicknames[i] == nameInPlay:
+						playerFound = 1
+						break
+				if playerFound != 1:
+					for l in range(len(weirdNamesList)):
+						if pitcherNames[i] == weirdNamesList[l]:
+							pitcherNicknames[i] = weirdNamesNick[l]
+							break
+	### Subpart 3: actually doing the work
+		dateFinal = file[3:12]
+		PAFinal = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+		HFinal = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+		PAvPFinal = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+		HvPFinal = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+		for play in plays:
+			batter = play.xpath('./td[8]/text()')[0]
+			pitcher = play.xpath('./td[9]/text()')[0]
+			batter = batter.replace(u"\u00A0", " ")
+			pitcher = pitcher.replace(u"\u00A0", " ")
+			batterIndex = nameMatcher(batter,lineupNicknames)
+			if batterIndex < 0:
+				continue
+			pitcherIndex = nameMatcher(pitcher,pitcherNicknames)
+			processedPlay = playProcess(play.xpath('./td[12]/text()')[0], \
+				pitcherIndex)
+			PAFinal[batterIndex] += processedPlay[0]
+			HFinal[batterIndex] += processedPlay[1]
+			PAvPFinal[batterIndex] += processedPlay[2]
+			HvPFinal[batterIndex] += processedPlay[3]
+		for o in range(9):
+			parsing.write( \
+				lineupNames[o] + '\t' + \
+				pitcherNames[1] + '\t' + \
+				dateFinal + '\t' + \
+				str(o + 1) + '\t' + \
+				str(PAFinal[o]) + '\t' + \
+				str(HFinal[o]) + '\t' + \
+				str(PAvPFinal[o]) + '\t' + \
+				str(HvPFinal[o]) + '\t' + '\n' )
+		for o in range(9):
+			parsing.write( \
+				lineupNames[o+9] + '\t' + \
+				pitcherNames[0] + '\t' + \
+				dateFinal + '\t' + \
+				str(o + 1) + '\t' + \
+				str(PAFinal[o+9]) + '\t' + \
+				str(HFinal[o+9]) + '\t' + \
+				str(PAvPFinal[o+9]) + '\t' + \
+				str(HvPFinal[o+9]) + '\t' + '\n' )
+
+		print("mv " + fullFile + " ./../parsed_box_scores/" + file)
+		call("mv " + fullFile + " ./../parsed_box_scores/" + file, shell=True)
+parsing.close()
